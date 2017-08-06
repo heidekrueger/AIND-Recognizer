@@ -77,7 +77,42 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+
+        best_score = np.Inf   
+        best_model = None #self.base_model(self.min_n_components)
+        best_n = None
+
+        n_obs = len(self.X)
+      
+        for n in range(self.min_n_components, self.max_n_components+1):
+            try:
+                model = self.base_model(n)
+                model.fit(self.X, self.lengths)
+
+
+                # finding the number of free params:
+                # let d = n_features, n = n_states
+                # transition probabilities: n*(n-1)
+                #       (Note: in class only (n-1) transitions to next state,
+                #              but hmmlearn uses full transition matrix)
+                # insertiean probs: n-1 (hmmlearn "learns" which state to start in)
+                # For each state n:
+                #   d means
+                #   d variance entries (we assume diagonal covariance)
+                # thus p = (n+1)(n-1) + 2nd 
+
+                p = n**2 + 2*n*model.n_features - 1
+                score = -2 * model.score(self.X, self.lengths) + p * np.log(n_obs)
+
+                if score < best_score:
+                    best_score = score
+                    best_model = model
+                    best_n = n
+
+            except Exception:
+                continue
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
@@ -93,7 +128,47 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        best_score = -np.Inf   
+        best_model = None #self.base_model(self.min_n_components)
+        best_n = None
+
+        n_obs = len(self.X)
+      
+        for n in range(self.min_n_components, self.max_n_components+1):
+            try: 
+
+                model = self.base_model(n)
+                model.fit(self.X, self.lengths)
+
+                logL = model.score(self.X, self.lengths)
+
+                # now get anti_logL for each other word
+
+                count = 0
+                sum_anti_ll = 0
+
+                for word in self.hwords:
+                    if word == self.this_word:
+                        continue
+
+                    anti_X, anti_length = self.hwords[word]
+
+                    sum_anti_ll += model.score(anti_X, anti_length)
+                    count += 1
+
+                # get final score according to DIC:
+
+                score = logL - 1/float(count) * sum_anti_ll
+
+                if score > best_score:
+                    best_score = score
+                    best_model = model
+                    best_n = n
+
+            except Exception:
+                continue
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -104,5 +179,47 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        best_score = - np.Inf   
+        # use model(min_n) instead of None in order to return current bestif failing a try block:
+        # Update: actually, DO use None (in case min_n also fails)
+        best_model = None #self.base_model(self.min_n_components)
+        best_n = None
+
+        # If fewer samples then 3, adjust accordingly
+        k = min(3, len(self.sequences))
+
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                if self.verbose:
+                    print("Training model with n={}".format(n))
+
+                model = self.base_model(n)
+                score = 0
+                # train and score for each fold, then get avg. test score
+
+                split = KFold(n_splits=k).split(self.sequences)
+                for train_idx, test_idx in split:
+                    X_train, l_train = combine_sequences(train_idx, self.sequences)
+                    X_test, l_test = combine_sequences(test_idx, self.sequences)
+
+                    model.fit(X_train, l_train)
+                    score += model.score(X_test, l_test)
+
+                score /= k
+
+                if score > best_score:
+                    best_score = score
+                    best_model = model
+                    best_n = n
+
+                    if self.verbose:
+                        print("n={} was best model so far, w/ score of {}".format(n, score))
+            except Exception:
+                continue
+
+
+        if self.verbose:
+            print("Best model is n={}".format(best_n))
+
+        # train best model on full dataset
+        return best_model.fit(self.X, self.lengths)
