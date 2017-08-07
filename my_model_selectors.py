@@ -221,5 +221,8 @@ class SelectorCV(ModelSelector):
         if self.verbose:
             print("Best model is n={}".format(best_n))
 
-        # train best model on full dataset
-        return best_model.fit(self.X, self.lengths)
+        # train best model on full dataset (unless None)
+        if best_model:
+            return best_model.fit(self.X, self.lengths)
+
+        return None
